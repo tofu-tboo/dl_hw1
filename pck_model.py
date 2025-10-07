@@ -1,51 +1,89 @@
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
+import torch.nn.functional as functional
 
-class TorchNNModel:
-    def __init__(self, lr=0.01, weight_decay=0.0):
-        self.net = nn.Sequential(
-            nn.Flatten(),          # (N,1,28,28) -> (N,784)
-            nn.Linear(784, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Linear(64, 10),
-        )
-
-        self.criterion = nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.SGD(self.net.parameters(), lr=lr, weight_decay=weight_decay)
+class TorchModel:
+    def __init__(self):
+        self.layers = None
+        self.evaluate = None
+        self.optimizer = None
 
         self.cache = {}
-        self._last_loss = None
-
-    @torch.no_grad()
-    def _probs_from_logits(self, logits):
-        return F.softmax(logits, dim=1).cpu().numpy()
-
-    def forward(self, X_np, Y_onehot_np, train=True):
-        if train:
-            self.net.train()
-        else:
-            self.net.eval()
-
-        x = torch.from_numpy(X_np).float()
-        y_idx = torch.from_numpy(Y_onehot_np.argmax(axis=1)).long()
-
-        logits = self.net(x)
-        loss = self.criterion(logits, y_idx)
-
-        self.cache["probs"] = self._probs_from_logits(logits)
-
-        if train:
-            self._last_loss = loss
-        else:
-            self._last_loss = None
-
-        return float(loss.detach().cpu())
+        self.last_loss = None
+    
+    def forward(self, x, y_onehot, train=True):
+        pass
 
     def backward(self):
         self.optimizer.zero_grad()
-        self._last_loss.backward()
+        self.last_loss.backward()
         self.optimizer.step()
-        self._last_loss = None
+        self.last_loss = None
+
+class TorchNNModel(TorchModel):
+    def __init__(self, layers, evaluate, optimizer):
+        self.layers = layers
+
+        self.evaluate = evaluate
+        self.optimizer = optimizer
+
+        self.cache = {}
+        self.last_loss = None
+
+    @torch.no_grad()
+    def probs_from_y_hat(self, y_hat):
+        return functional.softmax(y_hat, dim=1).cpu().numpy()
+
+    def forward(self, x, y_onehot, train=True):
+        if train:
+            self.layers.train()
+        else:
+            self.layers.eval()
+
+        x = torch.from_numpy(x).float()
+        y_idx = torch.from_numpy(y_onehot.argmax(axis=1)).long()
+
+        y_hat = self.layers(x)
+        loss = self.evaluate(y_hat, y_idx)
+
+        self.cache["probs"] = self.probs_from_y_hat(y_hat)
+
+        if train:
+            self.last_loss = loss
+        else:
+            self.last_loss = None
+
+        return float(loss.detach().cpu())
+
+class TorchCNNModel(TorchModel):
+    def __init__(self, layers, evaluate, optimizer):
+        self.layers = layers
+        self.evaluate = evaluate
+        self.optimizer = optimizer
+
+        self.cache = {}
+        self.last_loss = None
+
+    @torch.no_grad()
+    def probs_from_y_hat(self, y_hat):
+        return functional.softmax(y_hat, dim=1).cpu().numpy()
+
+    def forward(self, x, y_onehot, train=True):
+        if train:
+            self.layers.train()
+        else:
+            self.layers.eval()
+
+        x = torch.from_numpy(x).float()
+        y_idx = torch.from_numpy(y_onehot.argmax(axis=1)).long()
+
+        y_hat = self.layers(x)
+        loss = self.evaluate(y_hat, y_idx)
+
+        self.cache["probs"] = self.probs_from_y_hat(y_hat)
+
+        if train:
+            self.last_loss = loss
+        else:
+            self.last_loss = None
+
+        return float(loss.detach().cpu())

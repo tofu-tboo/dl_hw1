@@ -2,19 +2,28 @@ from dataloader import Dataloader
 from my_model import *
 from pck_model import *
 from graph import *
+import torch.nn as nn
 
 train_loader = Dataloader(".", is_train=True, shuffle=True, batch_size=64)
 test_loader  = Dataloader(".", is_train=False, shuffle=False, batch_size=256)
 
-layers = [
+my_layers = [
     LinearLayer(784, 128),
     ReLU(),
     LinearLayer(128, 64),
     ReLU(),
     LinearLayer(64, 10),
 ]
-my_model = Model(layers, evaluate=SoftmaxCrossEntropy(), optimizer=SGD(lr=0.01, weight_decay=0.0))
-pck_model = TorchNNModel(lr=0.01, weight_decay=0.0)
+pck_layers = nn.Sequential(
+    nn.Flatten(),
+    nn.Linear(784, 128),
+    nn.ReLU(),
+    nn.Linear(128, 64),
+    nn.ReLU(),
+    nn.Linear(64, 10),
+)
+my_model = Model(my_layers, evaluate=SoftmaxCrossEntropy(), optimizer=SGD(lr=0.01, weight_decay=0.0))
+pck_model = TorchNNModel(layers=pck_layers, evaluate=nn.CrossEntropyLoss(), optimizer=torch.optim.SGD(pck_layers.parameters(), lr=0.01, weight_decay=0.0))
 
 loss_graph_my = LossGraph()
 conf_mat_my = ConfusionMatrix()

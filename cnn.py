@@ -2,6 +2,7 @@ from dataloader import Dataloader
 from my_model import *
 from pck_model import *
 from graph import *
+import torch.nn as nn
 
 train_loader = Dataloader(".", is_train=True, shuffle=True, batch_size=64)
 test_loader  = Dataloader(".", is_train=False, shuffle=False, batch_size=256)
@@ -13,13 +14,27 @@ layers = [
     Conv2D(in_channels=8, out_channels=16, kernel_size=3, stride=1, padding=1),
     ReLU(),
     MaxPool2D(kernel_size=2),
-    Flatten(),
-    LinearLayer(16*7*7, 64),
+    Flatten(), # connect b/w mat layer and vector layer
+    LinearLayer(784, 64),
     ReLU(),
     LinearLayer(64, 10),
 ]
-my_model = Model(layers, evaluate=SoftmaxCrossEntropy(), optimizer=SGD(lr=0.01, weight_decay=1e-4))
-pck_model = TorchNNModel(lr=0.01, weight_decay=0.0)
+pck_layers = nn.Sequential(
+    nn.Conv2d(1, 8, 3, padding=1),
+    nn.ReLU(),
+    nn.MaxPool2d(2, 2),
+    nn.Conv2d(8, 16, 3, padding=1),
+    nn.ReLU(),
+    nn.MaxPool2d(2, 2),
+    nn.Flatten(),
+    nn.Linear(784, 64),
+    nn.ReLU(),
+    nn.Linear(64, 10)
+)
+
+my_model = Model(layers, evaluate=SoftmaxCrossEntropy(), optimizer=SGD(lr=0.01, weight_decay=0.0))
+pck_model = TorchCNNModel(layers=pck_layers, evaluate=nn.CrossEntropyLoss(), optimizer=torch.optim.SGD(pck_layers.parameters(), lr=0.01, weight_decay=0.0)
+)
 
 loss_graph_my = LossGraph()
 conf_mat_my = ConfusionMatrix()
@@ -43,6 +58,8 @@ for _ in range(20):
         total_loss_pck += loss_pck * Xb.shape[0]
         total_samples_pck += Xb.shape[0]
 
+    print("trained ok")
+
     loss_graph_pck.train_losses.append(total_loss_pck / total_samples_pck)
     loss_graph_my.train_losses.append(total_loss_my / total_samples_my)
     
@@ -56,7 +73,7 @@ for _ in range(20):
         total_samples_my += Xb.shape[0]
         total_loss_pck += loss_pck * Xb.shape[0]
         total_samples_pck += Xb.shape[0]
-
+    print("tested ok")
     loss_graph_pck.test_losses.append(total_loss_pck / total_samples_pck)
     loss_graph_my.test_losses.append(total_loss_my / total_samples_my)
 

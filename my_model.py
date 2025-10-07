@@ -18,7 +18,7 @@ class LinearLayer(Layer):
         super().__init__()
 
         rng = np.random.default_rng(25)
-        self.params["W"] = 0.01 * rng.standard_normal(size=(in_dim, out_dim))
+        self.params["W"] = np.sqrt(2.0 / in_dim) * rng.standard_normal(size=(in_dim, out_dim))
         self.params["b"] = np.zeros((1, out_dim))
 
     def forward(self, x):
@@ -37,113 +37,91 @@ class LinearLayer(Layer):
         return dx
 
 class Conv2D(Layer):
-    """
-    입력:  (N, Cin, H, W)
-    파라미터: W (Cout, Cin, KH, KW), b (1, Cout, 1, 1)
-    출력:  (N, Cout, OH, OW)  where OH,OW = get_out_shape(H,W,KH,KW,stride,pad)
-    """
-    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0, he_init=True):
+    def __init__(self, in_channels, out_channels, kernel_size, stride=1, padding=0):
         super().__init__()
-        KH, KW = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
-        self.KH, self.KW = KH, KW
+        self.kernel_size = kernel_size
         self.stride = stride
-        self.pad = padding
+        self.padding = padding
 
-        fan_in = in_channels * KH * KW
-        scale = np.sqrt(2.0/fan_in) if he_init else 0.01
         rng = np.random.default_rng(25)
-        self.params["W"] = (rng.standard_normal((out_channels, in_channels, KH, KW)) * scale).astype(np.float32)
-        self.params["b"] = np.zeros((1, out_channels, 1, 1), dtype=np.float32)
+        fan_in = in_channels * self.kernel_size * self.kernel_size
+        self.params["W"] = np.sqrt(2.0 / fan_in) * rng.standard_normal((out_channels, in_channels, self.kernel_size, self.kernel_size))
+        self.params["b"] = np.zeros((1, out_channels, 1, 1))
 
     def forward(self, x):
-        # x: (N,C,H,W)
         self.cache["x_shape"] = x.shape
-        W = self.params["W"]              # (Cout,Cin,KH,KW)
-        b = self.params["b"]              # (1,Cout,1,1)
-        N, C, H, Wimg = x.shape
-        Cin = W.shape[1]
-        assert C == Cin, f"Cin mismatch: {C} vs {Cin}"
+        weight = self.params["W"]
+        batch_size = x.shape[0]
+        kernel_size = weight.shape[2]
 
-        Xcol, OH, OW = im2col(x, self.KH, self.KW, self.stride, self.pad)    # (N*OH*OW, Cin*KH*KW)
-        Wcol = W.reshape(W.shape[0], -1).T                                   # (Cin*KH*KW, Cout)
-        out = Xcol @ Wcol + b.reshape(1, -1)                                 # (N*OH*OW, Cout)
-        out = out.reshape(N, OH, OW, W.shape[0]).transpose(0, 3, 1, 2)       # (N,Cout,OH,OW)
+        x_col, out_width, out_height = im2col(x=x, kernel_width=kernel_size, kernel_height=kernel_size, stride=self.stride, padding=self.padding
+        )
+        w_col = weight.reshape(weight.shape[0], -1).T
 
-        # cache
-        self.cache["Xcol"] = Xcol
-        self.cache["Wcol"] = Wcol
-        self.cache["OH"] = OH
-        self.cache["OW"] = OW
+        out = x_col @ w_col + self.params["b"].reshape(1, -1)
+        out = out.reshape(batch_size, out_width, out_height, weight.shape[0]).transpose(0, 3, 1, 2)
+
+        self.cache["x_col"] = x_col
+        self.cache["w_col"] = w_col
+        self.cache["out_width"] = out_width
+        self.cache["out_height"] = out_height
         return out
 
-    def backward(self, dY):
-        # dY: (N,Cout,OH,OW)
-        X_shape = self.cache["x_shape"]
-        Xcol = self.cache["Xcol"]                      # (N*OH*OW, Cin*KH*KW)
-        Wcol = self.cache["Wcol"]                      # (Cin*KH*KW, Cout)
-        N, C, H, Wimg = X_shape
-        Cout = dY.shape[1]
-        OH, OW = self.cache["OH"], self.cache["OW"]
+    def backward(self, dy):
+        x_shape = self.cache["x_shape"]
+        batch_size = x_shape[0]
+        out_channels = dy.shape[1]
 
-        dYrs = dY.transpose(0, 2, 3, 1).reshape(N*OH*OW, Cout)  # (N*OH*OW, Cout)
+        dy_reshaped = dy.transpose(0, 2, 3, 1).reshape(batch_size * self.cache["out_width"] * self.cache["out_height"], out_channels)
 
-        # dW
-        dWcol = Xcol.T @ dYrs                                   # (Cin*KH*KW, Cout)
-        dW = dWcol.T.reshape(self.params["W"].shape)            # (Cout,Cin,KH,KW)
+        dw_col = self.cache["x_col"].T @ dy_reshaped
+        dW = dw_col.T.reshape(self.params["W"].shape)
+        db = dy.sum(axis=(0, 2, 3), keepdims=True)
 
-        # db
-        db = dY.sum(axis=(0, 2, 3), keepdims=True)              # (1,Cout,1,1)
-
-        # dX
-        dXcol = dYrs @ Wcol.T                                   # (N*OH*OW, Cin*KH*KW)
-        dX = col2im(dXcol, X_shape, self.KH, self.KW, self.stride, self.pad)  # (N,Cin,H,W)
+        dx_col = dy_reshaped @ self.cache["w_col"].T
+        dx = col2im(columns=dx_col, x_shape=x_shape, kernel_width=self.kernel_size, kernel_height=self.kernel_size, stride=self.stride, padding=self.padding)
 
         self.grads["W"] = dW
         self.grads["b"] = db
-        return dX
+        return dx
+
 
 class MaxPool2D(Layer):
-    """
-    윈도우 내 최대값만 통과. 파라미터 없음.
-    입력:  (N,C,H,W) -> 출력: (N,C,OH,OW)
-    """
     def __init__(self, kernel_size=2, stride=None, padding=0):
         super().__init__()
-        self.KH, self.KW = (kernel_size, kernel_size) if isinstance(kernel_size, int) else kernel_size
+        self.kernel_size = kernel_size
         self.stride = stride if stride is not None else kernel_size
-        self.pad = padding
+        self.padding = padding
 
     def forward(self, x):
         self.cache["x_shape"] = x.shape
-        Xcol, OH, OW = im2col(x, self.KH, self.KW, self.stride, self.pad)  # (N*OH*OW, C*KH*KW)
-        N, C, H, W = x.shape
-        Xcol = Xcol.reshape(N*OH*OW, C, self.KH*self.KW)                   # (N*OH*OW, C, K)
-        max_idx = Xcol.argmax(axis=2)                                      # (N*OH*OW, C)
-        out = Xcol[np.arange(Xcol.shape[0])[:,None], np.arange(C), max_idx]# (N*OH*OW, C)
-        out = out.reshape(N, OH, OW, C).transpose(0,3,1,2)                 # (N,C,OH,OW)
+        x_col, out_width, out_height = im2col(x=x, kernel_width=self.kernel_size, kernel_height=self.kernel_size, stride=self.stride, padding=self.padding)
+        batch_size, channels, _, _ = x.shape
+        x_col = x_col.reshape(batch_size * out_width * out_height, channels, self.kernel_size * self.kernel_size)
 
-        self.cache["Xcol_shape"] = (N, C, OH, OW)
-        self.cache["max_idx"] = max_idx
+        max_index = x_col.argmax(axis=2)
+        out = x_col[np.arange(x_col.shape[0])[:, None], np.arange(channels), max_index]
+        out = out.reshape(batch_size, out_width, out_height, channels).transpose(0, 3, 1, 2)
+
+        self.cache["out_shape"] = (batch_size, channels, out_width, out_height)
+        self.cache["max_index"] = max_index
         return out
 
-    def backward(self, dY):
-        N, C, OH, OW = self.cache["Xcol_shape"]
-        K = self.KH * self.KW
-        dYrs = dY.transpose(0,2,3,1).reshape(N*OH*OW, C)        # (N*OH*OW, C)
+    def backward(self, dy):
+        batch_size, channels, out_width, out_height = self.cache["out_shape"]
+        kernel_area = self.kernel_size * self.kernel_size
+        dy_reshaped = dy.transpose(0, 2, 3, 1).reshape(batch_size * out_width * out_height, channels)
 
-        dXcol = np.zeros((N*OH*OW, C, K), dtype=dY.dtype)       # (N*OH*OW, C, K)
-        max_idx = self.cache["max_idx"]
-        # put dY into argmax positions
-        dXcol[np.arange(dXcol.shape[0])[:,None], np.arange(C), max_idx] = dYrs
-        dXcol = dXcol.reshape(N*OH*OW, C*K)
+        dx_col = np.zeros((batch_size * out_width * out_height, channels, kernel_area))
+        dx_col[np.arange(dx_col.shape[0])[:, None], np.arange(channels), self.cache["max_index"]] = dy_reshaped
+        dx_col = dx_col.reshape(batch_size * out_width * out_height, channels * kernel_area)
 
-        # col2im으로 원복
-        X_shape = self.cache["x_shape"]
-        dX = col2im(dXcol, X_shape, self.KH, self.KW, self.stride, self.pad)
-        return dX
+        x_shape = self.cache["x_shape"]
+        dx = col2im(columns=dx_col, x_shape=x_shape,kernel_width=self.kernel_size, kernel_height=self.kernel_size, stride=self.stride, padding=self.padding)
+        return dx
+
 
 class Flatten(Layer):
-    '''transition b/w mat <-> array'''
     def forward(self, x):
         self.cache["shape"] = x.shape
         return x.reshape(x.shape[0], -1)

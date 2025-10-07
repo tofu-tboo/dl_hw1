@@ -206,7 +206,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-.png
-.docx
-.pdf
-.gz
+*.png
+*.docx
+*.pdf
+*.gz

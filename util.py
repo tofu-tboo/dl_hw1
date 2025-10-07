@@ -1,35 +1,40 @@
 import numpy as np
 
-def get_out_shape(H, W, KH, KW, stride, pad):
-    OH = (H + 2*pad - KH)//stride + 1
-    OW = (W + 2*pad - KW)//stride + 1
-    return OH, OW
+def get_filtered_shape(width, height, kernel_width, kernel_height, stride, padding):
+    out_width  = (width  + 2 * padding - kernel_width)  // stride + 1
+    out_height = (height + 2 * padding - kernel_height) // stride + 1
+    return out_width, out_height
 
-def im2col(X, KH, KW, stride=1, pad=0):
-    # X: (N,C,H,W) -> col: (N*OH*OW, C*KH*KW)
-    N, C, H, W = X.shape
-    OH, OW = get_out_shape(H, W, KH, KW, stride, pad)
-    Xpad = np.pad(X, ((0,0),(0,0),(pad,pad),(pad,pad)), mode='constant')
-    col = np.zeros((N, C, KH, KW, OH, OW), dtype=X.dtype)
-    for i in range(KH):
-        i_max = i + stride*OH
-        for j in range(KW):
-            j_max = j + stride*OW
-            col[:, :, i, j, :, :] = Xpad[:, :, i:i_max:stride, j:j_max:stride]
-    col = col.transpose(0, 4, 5, 1, 2, 3).reshape(N*OH*OW, C*KH*KW)
-    return col, OH, OW
+def im2col(x, kernel_width, kernel_height, stride, padding):
+    batch_size, channels, width, height = x.shape
+    out_width, out_height = get_filtered_shape(width, height, kernel_width, kernel_height, stride, padding)
 
-def col2im(col, X_shape, KH, KW, stride=1, pad=0):
-    # col: (N*OH*OW, C*KH*KW) -> X: (N,C,H,W)
-    N, C, H, W = X_shape
-    OH, OW = get_out_shape(H, W, KH, KW, stride, pad)
-    col = col.reshape(N, OH, OW, C, KH, KW).transpose(0, 3, 4, 5, 1, 2)
-    Xpad = np.zeros((N, C, H + 2*pad, W + 2*pad), dtype=col.dtype)
-    for i in range(KH):
-        i_max = i + stride*OH
-        for j in range(KW):
-            j_max = j + stride*OW
-            Xpad[:, :, i:i_max:stride, j:j_max:stride] += col[:, :, i, j, :, :]
-    if pad == 0:
-        return Xpad
-    return Xpad[:, :, pad:-pad, pad:-pad]
+    x_padded = np.pad(x, ((0, 0), (0, 0), (padding, padding), (padding, padding)), mode='constant')
+
+    columns = np.zeros((batch_size, channels, kernel_width, kernel_height, out_width, out_height))
+    for i in range(kernel_width):
+        i_max = i + stride * out_width
+        for j in range(kernel_height):
+            j_max = j + stride * out_height
+
+            columns[:, :, i, j, :, :] = x_padded[:, :, i:i_max:stride, j:j_max:stride]
+
+    columns = columns.transpose(0, 4, 5, 1, 2, 3).reshape(batch_size * out_width * out_height, channels * kernel_width * kernel_height)
+    return columns, out_width, out_height
+
+def col2im(columns, x_shape, kernel_width, kernel_height, stride, padding):
+    batch_size, channels, width, height = x_shape
+    out_width, out_height = get_filtered_shape(width, height, kernel_width, kernel_height, stride, padding)
+
+    x_padded = np.zeros((batch_size, channels, width + 2 * padding, height + 2 * padding))
+
+    columns_reshaped = columns.reshape(batch_size, out_width, out_height, channels, kernel_width, kernel_height).transpose(0, 3, 4, 5, 1, 2)
+    for i in range(kernel_width):
+        i_max = i + stride * out_width
+        for j in range(kernel_height):
+            j_max = j + stride * out_height
+            x_padded[:, :, i:i_max:stride, j:j_max:stride] += columns_reshaped[:, :, i, j, :, :]
+
+    if padding == 0:
+        return x_padded
+    return x_padded[:, :, padding:-padding, padding:-padding]
