@@ -32,8 +32,8 @@ pck_layers = nn.Sequential(
     nn.Linear(64, 10)
 )
 
-my_model = Model(layers, evaluate=SoftmaxCrossEntropy(), optimizer=SGD(lr=0.01, weight_decay=0.0))
-pck_model = TorchCNNModel(layers=pck_layers, evaluate=nn.CrossEntropyLoss(), optimizer=torch.optim.SGD(pck_layers.parameters(), lr=0.01, weight_decay=0.0)
+my_model = Model(layers, evaluate=SoftmaxCrossEntropy(), optimizer=SGD(lr=0.2, weight_decay=0.0))
+pck_model = TorchCNNModel(layers=pck_layers, evaluate=nn.CrossEntropyLoss(), optimizer=torch.optim.SGD(pck_layers.parameters(), lr=0.2, weight_decay=0.0)
 )
 
 loss_graph_my = LossGraph()
@@ -43,7 +43,7 @@ loss_graph_pck = LossGraph()
 conf_mat_pck = ConfusionMatrix()
 top3_images_pck = Top3Images()
 
-for _ in range(20):
+for _ in range(50):
     total_loss_my, total_samples_my = 0.0, 0
     total_loss_pck, total_samples_pck = 0.0, 0
     for Xb, Yb in train_loader:
@@ -77,7 +77,7 @@ for _ in range(20):
     loss_graph_pck.test_losses.append(total_loss_pck / total_samples_pck)
     loss_graph_my.test_losses.append(total_loss_my / total_samples_my)
 
-Xb, Yb = next(iter(test_loader))
+correct, incorrect = [0, 0], [0, 0]
 for Xb, Yb in test_loader:
     my_model.forward(Xb, Yb)
     probs_my = my_model.evaluate.cache["probs"]
@@ -90,8 +90,17 @@ for Xb, Yb in test_loader:
 
     labels = Yb.argmax(axis=1)
     for t, p in zip(labels, preds_my):
+        if t == p:
+            correct[0] += 1
+        else:
+            incorrect[0] += 1
         conf_mat_my.mat[t, p] += 1
+    
     for t, p in zip(labels, preds_pck):
+        if t == p:
+            correct[1] += 1
+        else:
+            incorrect[1] += 1
         conf_mat_pck.mat[t, p] += 1
 
     top3_images_my.all_imgs.append(Xb)
@@ -101,6 +110,9 @@ for Xb, Yb in test_loader:
     top3_images_pck.all_imgs.append(Xb)
     top3_images_pck.all_probs.append(probs_pck)
     top3_images_pck.all_preds.append(probs_pck.argmax(1))
+
+print(f"My model accuracy: {correct[0] / (correct[0] + incorrect[0]):.4f}")
+print(f"Package model accuracy: {correct[1] / (correct[1] + incorrect[1]):.4f}")
 
 loss_graph_my.show()
 conf_mat_my.show()
